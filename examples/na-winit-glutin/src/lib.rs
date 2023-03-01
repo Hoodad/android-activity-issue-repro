@@ -1,5 +1,6 @@
 use std::ffi::{CStr, CString};
 use std::num::NonZeroU32;
+use std::{thread, time};
 
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
@@ -9,6 +10,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget};
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
+use winit::platform::run_return::EventLoopExtRunReturn;
 #[cfg(glx_backend)]
 use winit::platform::unix;
 
@@ -367,54 +369,64 @@ impl App {
     }
 }
 
-fn run(event_loop: EventLoop<()>) {
+fn run(event_loop: &mut EventLoop<()>) {
     log::trace!("Running mainloop...");
 
     let raw_display = event_loop.raw_display_handle();
     let mut app = App::new(raw_display);
 
-    event_loop.run(move |event, event_loop, control_flow| {
-        log::trace!("Received Winit event: {event:?}");
+    let mut resume_app = false;
+    loop {
+        event_loop.run_return(|event, _, control_flow| {
+            control_flow.set_wait();
+            match event {
+                Event::Resumed => {
+                    resume_app = true;
+                }
+                Event::Suspended => {
+                    log::trace!("Suspended, dropping surface state...");
+                    app.surface_state = None;
+                }
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(_size),
+                    ..
+                } => {
+                    // Winit: doesn't currently implicitly request a redraw
+                    // for a resize which may be required on some platforms...
+                    app.queue_redraw();
+                }
+                Event::RedrawRequested(_) => {
+                    log::trace!("Handling Redraw Request");
 
-        *control_flow = ControlFlow::Wait;
-        match event {
-            Event::Resumed => {
-                app.resume(event_loop);
-            }
-            Event::Suspended => {
-                log::trace!("Suspended, dropping surface state...");
-                app.surface_state = None;
-            }
-            Event::WindowEvent {
-                event: WindowEvent::Resized(_size),
-                ..
-            } => {
-                // Winit: doesn't currently implicitly request a redraw
-                // for a resize which may be required on some platforms...
-                app.queue_redraw();
-            }
-            Event::RedrawRequested(_) => {
-                log::trace!("Handling Redraw Request");
-
-                if let Some(ref surface_state) = app.surface_state {
-                    if let Some(ctx) = &app.context {
-                        if let Some(ref renderer) = app.render_state {
-                            renderer.draw();
-                            if let Err(err) = surface_state.surface.swap_buffers(ctx) {
-                                log::error!("Failed to swap buffers after render: {}", err);
+                    if let Some(ref surface_state) = app.surface_state {
+                        if let Some(ctx) = &app.context {
+                            if let Some(ref renderer) = app.render_state {
+                                renderer.draw();
+                                if let Err(err) = surface_state.surface.swap_buffers(ctx) {
+                                    log::error!("Failed to swap buffers after render: {}", err);
+                                }
                             }
+                            app.queue_redraw();
                         }
-                        app.queue_redraw();
                     }
                 }
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => *control_flow = ControlFlow::Exit,
+                Event::MainEventsCleared => control_flow.set_exit(),
+                _ => {}
             }
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => *control_flow = ControlFlow::Exit,
-            _ => {}
+        });
+
+        if resume_app == true {
+            app.resume(&event_loop);
+            resume_app = false;
         }
-    });
+
+        let ten_millis = time::Duration::from_millis(16);
+        thread::sleep(ten_millis);
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -424,8 +436,8 @@ fn android_main(app: AndroidApp) {
 
     android_logger::init_once(android_logger::Config::default().with_min_level(log::Level::Trace));
 
-    let event_loop = EventLoopBuilder::new().with_android_app(app).build();
-    run(event_loop);
+    let mut event_loop = EventLoopBuilder::new().with_android_app(app).build();
+    run(&mut event_loop);
 }
 
 // declared as pub to avoid dead_code warnings from cdylib target build
