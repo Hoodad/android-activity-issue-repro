@@ -19,7 +19,7 @@ wayland = ["glutin/wayland", "winit/wayland", "winit/wayland-dlopen", "winit/way
 [dependencies]
 log = "0.4"
 # TODO: switch to stable release once 0.28 is released
-winit = { git = "https://github.com/rust-windowing/winit", features = ["android-native-activity"] }
+winit = { version = "0.28", features = ["android-native-activity"] }
 glutin = "0.30"
 raw-window-handle = "0.5.0"
 
