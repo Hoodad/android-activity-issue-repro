@@ -1,6 +1,10 @@
 use std::ffi::{CStr, CString};
 use std::num::NonZeroU32;
 
+use std::thread;
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
@@ -367,16 +371,29 @@ impl App {
     }
 }
 
+const POLL_SLEEP_TIME: std::time::Duration = std::time::Duration::from_millis(16);
+
 fn run(event_loop: EventLoop<()>) {
     log::trace!("Running mainloop...");
 
     let raw_display = event_loop.raw_display_handle();
     let mut app = App::new(raw_display);
 
-    event_loop.run(move |event, event_loop, control_flow| {
-        log::trace!("Received Winit event: {event:?}");
+    let start = SystemTime::now();
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+    println!("{:?}", since_the_epoch);
 
-        *control_flow = ControlFlow::Wait;
+    event_loop.run(move |event, event_loop, control_flow| {
+        log::trace!(
+            "Time: {}",
+            SystemTime::now()
+                .duration_since(start)
+                .expect("Time went backwards")
+                .as_millis()
+        );
+
         match event {
             Event::Resumed => {
                 app.resume(event_loop);
@@ -407,6 +424,10 @@ fn run(event_loop: EventLoop<()>) {
                         app.queue_redraw();
                     }
                 }
+            }
+            Event::RedrawEventsCleared => {
+                *control_flow = ControlFlow::Poll;
+                thread::sleep(POLL_SLEEP_TIME);
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
